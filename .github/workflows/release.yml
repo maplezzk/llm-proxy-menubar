@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION=$(cat VERSION)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build menubar
+        run: |
+          chmod +x scripts/build-menubar.sh
+          ./scripts/build-menubar.sh ${{ steps.version.outputs.version }}
+
+      - name: Calculate SHA256
+        id: sha
+        run: |
+          SHA=$(shasum -a 256 .build/LLMProxyMenuBar-v${{ steps.version.outputs.version }}.zip | cut -d' ' -f1)
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+          echo "SHA256: $SHA"
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: LLMProxyMenuBar v${{ steps.version.outputs.version }}
+          body: |
+            ## LLMProxyMenuBar v${{ steps.version.outputs.version }}
+
+            macOS menu bar app for llm-proxy.
+
+            ### Install via Homebrew
+            ```bash
+            brew install --cask maplezzk/tap/llm-proxy-menubar
+            ```
+          files: .build/LLMProxyMenuBar-v${{ steps.version.outputs.version }}.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Homebrew tap
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          SHA="${{ steps.sha.outputs.sha }}"
+
+          git clone https://x-access-token:${{ secrets.TAP_REPO_PAT }}@github.com/maplezzk/homebrew-tap.git tap-repo
+          cd tap-repo
+
+          sed -i '' "s/version \".*\"/version \"$VERSION\"/" Casks/llm-proxy-menubar.rb
+          sed -i '' "s/sha256 \".*\"/sha256 \"$SHA\"/" Casks/llm-proxy-menubar.rb
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/llm-proxy-menubar.rb
+          git commit -m "chore: bump llm-proxy-menubar to v$VERSION"
+          git push origin main
